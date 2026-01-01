@@ -113,7 +113,7 @@ const http = app.createServer((request, response) => {
             const checkin = fs.writeFileSync("./attendence.json", JSON.stringify(old_checkin))
 
             response.writeHead(200,{ "Content-Type": "application/json" })
-            response.write(JSON.stringify({ msg: "Check in ✅ Laboratory 🔬🧪🥼" }));
+            response.write(JSON.stringify({ msg: "Check in ✅ Laboratory 🔬🧪🥼" ,data:old_checkin}));
             response.end()
 
         })
@@ -136,7 +136,7 @@ const http = app.createServer((request, response) => {
 
 
             response.writeHead(200,{ "Content-Type": "application/json" })
-            response.write(JSON.stringify({ msg: "Check out ✅ Go Home" }));
+            response.write(JSON.stringify({ msg: "Check out ✅ Go Home" ,data:old_checkin}));
             response.end()
 
         })
