@@ -138,4 +138,8 @@ const http = app.createServer((request, response) => {
 
     }
     // listening on specific port
-}).listen(3000, () => { console.log("http server is running") })
+
+})
+const port = process.env.PORT || 3000;
+server.listen(port, () => console.log(`Server running on ${port}`));
+   
