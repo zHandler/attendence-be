@@ -66,7 +66,7 @@ const http = app.createServer((request, response) => {
                 response.writeHead(404, { "Content-Type": "application/json" })
                 return response.end(JSON.stringify({ msg: "user not registered ", code: 404 }))
             }
-            response.end(JSON.stringify({ msg: "welcome back ", code: 200 , data:isExist}))
+            response.end(JSON.stringify({ msg: "welcome back ", code: 200, data: isExist }))
         })
 
     }
@@ -98,13 +98,13 @@ const http = app.createServer((request, response) => {
     }
 
     else if (request.method == "POST" && request.url == "/in") {
-        let checkin_info = "" 
+        let checkin_info = ""
         request.on("data", (chunk) => {
             checkin_info += chunk
         })
         request.on("end", () => {
             checkin_info = JSON.parse(checkin_info)
-            console.log({checkin_info})
+            console.log({ checkin_info })
             // read DB
             const old_checkin = JSON.parse(fs.readFileSync("./attendence.json"))
 
@@ -112,19 +112,21 @@ const http = app.createServer((request, response) => {
 
             const checkin = fs.writeFileSync("./attendence.json", JSON.stringify(old_checkin))
 
+            response.writeHead(200,{ "Content-Type": "application/json" })
+            response.write(JSON.stringify({ msg: "Check in ✅ Laboratory 🔬🧪🥼" }));
+            response.end()
 
-            response.end();
         })
 
     }
-     else if (request.method == "POST" && request.url == "/out") {
-        let checkin_info = "" 
+    else if (request.method == "POST" && request.url == "/out") {
+        let checkin_info = ""
         request.on("data", (chunk) => {
             checkin_info += chunk
         })
         request.on("end", () => {
             checkin_info = JSON.parse(checkin_info)
-            console.log({checkin_info})
+            console.log({ checkin_info })
             // read DB
             const old_checkin = JSON.parse(fs.readFileSync("./attendence.json"))
 
@@ -133,14 +135,12 @@ const http = app.createServer((request, response) => {
             const checkin = fs.writeFileSync("./attendence.json", JSON.stringify(old_checkin))
 
 
-            response.end();
+            response.writeHead(200,{ "Content-Type": "application/json" })
+            response.write(JSON.stringify({ msg: "Check out ✅ Go Home" }));
+            response.end()
+
         })
 
     }
     // listening on specific port
-
-})
-const port = process.env.PORT || 3000;
-http.listen(port, () => console.log(`Server running on ${port}`));
-   
-
+}).listen(3000, () => { console.log("http server is running") })
