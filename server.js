@@ -175,35 +175,53 @@ http.createServer((req, res) => {
   // =====================
   // REPORT
   // =====================
-  if (req.method === "GET" && req.url === "/report") {
-    try {
-      let data = [];
-      if (fs.existsSync("./attendence.json")) {
-        data = JSON.parse(fs.readFileSync("./attendence.json"));
-      }
-
-      const reportPath = path.join(__dirname, "main_report.csv");
-      const stream = fs.createWriteStream(reportPath);
-      stream.write("name,date,time,type,lat,lng\n");
-
-      data.forEach(r => {
-        stream.write(`${r.name},${r.date},${r.now},${r.type},${r.lat},${r.lng}\n`);
-      });
-
-      stream.end();
-      stream.on("finish", () => {
-        res.writeHead(200, {
-          "Content-Type": "text/csv",
-          "Content-Disposition": "attachment; filename=attendance_report.csv"
-        });
-        fs.createReadStream(reportPath).pipe(res);
-      });
-    } catch {
-      res.writeHead(500);
-      res.end(JSON.stringify({ msg: "Server error" }));
+if (req.method === "GET" && req.url.startsWith("/report")) {
+  try {
+    let data = [];
+    if (fs.existsSync("./attendence.json")) {
+      data = JSON.parse(fs.readFileSync("./attendence.json"));
     }
-    return;
+
+    // =======================
+    // Parse query parameters
+    // =======================
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const start = url.searchParams.get("start"); // e.g., 2026-01-01
+    const end = url.searchParams.get("end");     // e.g., 2026-01-02
+
+    if (start || end) {
+      data = data.filter(r => {
+        const recordDate = r.date; // YYYY-MM-DD
+        if (start && recordDate < start) return false;
+        if (end && recordDate > end) return false;
+        return true;
+      });
+    }
+
+    const reportPath = path.join(__dirname, "main_report.csv");
+    const stream = fs.createWriteStream(reportPath);
+    stream.write("name,date,time,type,lat,lng\n");
+
+    data.forEach(r => {
+      stream.write(`${r.name},${r.date},${r.now},${r.type},${r.lat},${r.lng}\n`);
+    });
+
+    stream.end();
+    stream.on("finish", () => {
+      res.writeHead(200, {
+        "Content-Type": "text/csv",
+        "Content-Disposition": "attachment; filename=attendance_report.csv"
+      });
+      fs.createReadStream(reportPath).pipe(res);
+    });
+
+  } catch {
+    res.writeHead(500);
+    res.end(JSON.stringify({ msg: "Server error" }));
   }
+  return;
+}
+
 
   // =====================
   // UNKNOWN ROUTE
@@ -214,3 +232,4 @@ http.createServer((req, res) => {
 }).listen(3000, () => {
   console.log("✅ Attendance server running on port 3000");
 });
+
