@@ -1,146 +1,216 @@
-// importing the module HTTP
-const app = require("http");
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+// =====================
+// Facility Config
+// =====================
+const FACILITY = {
+  lat: 25.588283,
+  lng: 56.267099,
+  radius: 100 // meters
+};
 
-// creating the server
-const http = app.createServer((request, response) => {
+// =====================
+// Distance Calculation
+// =====================
+function getDistanceInMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = v => (v * Math.PI) / 180;
 
-    // create header
-    // ✅ CORS HEADERS
-    response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    // ✅ Handle preflight request
-    if (request.method === "OPTIONS") {
-        response.writeHead(204);
-        response.end();
-        return;
-    }
-    if (request.method == "GET" && request.url == "/") {
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
 
-        response.write("welcome to Attendence app")
-        response.end()
-    }
-    else if (request.method == "POST" && request.url == "/auth/register") {
-        let bodyData = "";
-        request.on("data", (chunk) => { bodyData += chunk });
-        request.on("end", () => {
-            try {
-                bodyData = JSON.parse(bodyData)
-                // read old users
-                const users = JSON.parse(fs.readFileSync("./empDB.json"))
-                // push new
-                users.push(bodyData)
-                // store all
-                const store = fs.writeFileSync("./empDB.json", JSON.stringify(users))
-                response.writeHead(200, { "content-type": "application/json" })
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) ** 2;
 
-                response.end(JSON.stringify({ bodyData, code: 200, msg: "registered successfully" }))
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
-            } catch (error) {
-                response.writeHead(400)
+// =====================
+// Server
+// =====================
+http.createServer((req, res) => {
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-                response.end(JSON.stringify({ bodyData, code: 400, msg: "registered failed" }))
-            }
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    return res.end();
+  }
+
+  // =====================
+  // DEFAULT
+  // =====================
+  if (req.method === "GET" && req.url === "/") {
+    res.end("Attendance Server Running");
+    return;
+  }
+
+  // =====================
+  // REGISTER
+  // =====================
+  if (req.method === "POST" && req.url === "/auth/register") {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.name || !data.email || !data.password) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "All fields are required", code: 400 }));
         }
-        )
 
-    }
-    else if (request.method == "POST" && request.url == "/auth/login") {
+        let users = [];
+        if (fs.existsSync("./empDB.json")) {
+          users = JSON.parse(fs.readFileSync("./empDB.json"));
+        }
 
-        let loginInfo = "";
-        request.on("data", (chunk) => loginInfo += chunk)
-        request.on("end", () => {
-            loginInfo = JSON.parse(loginInfo)
-            const read_db = JSON.parse(fs.readFileSync("./empDB.json"))
-            console.log(loginInfo)
-            const isExist = read_db.find(element => {
+        const exists = users.find(u => u.email === data.email);
+        if (exists) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "User already exists", code: 400 }));
+        }
 
+        users.push(data);
+        fs.writeFileSync("./empDB.json", JSON.stringify(users));
 
-                return element.email == loginInfo.email && element.password == loginInfo.password
-            });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ msg: "Registered successfully", code: 200, data }));
+      } catch {
+        res.writeHead(500);
+        res.end(JSON.stringify({ msg: "Server error", code: 500 }));
+      }
+    });
+    return;
+  }
 
-            if (!isExist) {
-                response.writeHead(404, { "Content-Type": "application/json" })
-                return response.end(JSON.stringify({ msg: "user not registered ", code: 404 }))
-            }
-            response.end(JSON.stringify({ msg: "welcome back ", code: 200, data: isExist }))
-        })
+  // =====================
+  // LOGIN
+  // =====================
+  if (req.method === "POST" && req.url === "/auth/login") {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const loginInfo = JSON.parse(body);
+        if (!loginInfo.email || !loginInfo.password) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "Email & password required", code: 400 }));
+        }
 
-    }
-    else if (request.method == "GET" && request.url == "/report") {
-        // read DB
-        const data = JSON.parse(fs.readFileSync("./attendence.json"))
+        let users = [];
+        if (fs.existsSync("./empDB.json")) {
+          users = JSON.parse(fs.readFileSync("./empDB.json"));
+        }
 
-        const report = path.join(__dirname, "main_report.csv")
-        // create main columns
-        const stream = fs.createWriteStream(report)
-        stream.write('name,date,time,type\n')
+        const user = users.find(
+          u => u.email === loginInfo.email && u.password === loginInfo.password
+        );
 
-        // create csv 
-        data.forEach(element => {
-            stream.write(`${element.name},${element.date},${element.now},${element.type}\n`)
+        if (!user) {
+          res.writeHead(404);
+          return res.end(JSON.stringify({ msg: "User not registered", code: 404 }));
+        }
 
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ msg: "Login successful", code: 200, data: user }));
+      } catch {
+        res.writeHead(500);
+        res.end(JSON.stringify({ msg: "Server error", code: 500 }));
+      }
+    });
+    return;
+  }
+
+  // =====================
+  // CHECK-IN / CHECK-OUT
+  // =====================
+  if (req.method === "POST" && (req.url === "/in" || req.url === "/out")) {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+
+        const { lat, lng, name } = data;
+        if (!lat || !lng || !name) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "Missing required fields" }));
+        }
+
+        const distance = getDistanceInMeters(lat, lng, FACILITY.lat, FACILITY.lng);
+
+        if (distance > FACILITY.radius) {
+          res.writeHead(403);
+          return res.end(JSON.stringify({ msg: "❌ Outside facility - access denied" }));
+        }
+
+        let records = [];
+        if (fs.existsSync("./attendence.json")) {
+          records = JSON.parse(fs.readFileSync("./attendence.json"));
+        }
+
+        records.push(data);
+        fs.writeFileSync("./attendence.json", JSON.stringify(records));
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          msg: req.url === "/in" ? "Check in ✅ Laboratory 🔬" : "Check out ✅ Go Home 🏡",
+          data: records
+        }));
+      } catch {
+        res.writeHead(500);
+        res.end(JSON.stringify({ msg: "Server error" }));
+      }
+    });
+    return;
+  }
+
+  // =====================
+  // REPORT
+  // =====================
+  if (req.method === "GET" && req.url === "/report") {
+    try {
+      let data = [];
+      if (fs.existsSync("./attendence.json")) {
+        data = JSON.parse(fs.readFileSync("./attendence.json"));
+      }
+
+      const reportPath = path.join(__dirname, "main_report.csv");
+      const stream = fs.createWriteStream(reportPath);
+      stream.write("name,date,time,type,lat,lng\n");
+
+      data.forEach(r => {
+        stream.write(`${r.name},${r.date},${r.now},${r.type},${r.lat},${r.lng}\n`);
+      });
+
+      stream.end();
+      stream.on("finish", () => {
+        res.writeHead(200, {
+          "Content-Type": "text/csv",
+          "Content-Disposition": "attachment; filename=attendance_report.csv"
         });
-        stream.end()
-        stream.on("finish", () => {
-            response.writeHead(200, {
-                "Content-Type": "text/csv",
-                "Content-Disposition": "attachment; filename=attendance_report.csv"
-            });
-
-            // Send file
-            fs.createReadStream(report).pipe(response);
-        });
-
+        fs.createReadStream(reportPath).pipe(res);
+      });
+    } catch {
+      res.writeHead(500);
+      res.end(JSON.stringify({ msg: "Server error" }));
     }
+    return;
+  }
 
-    else if (request.method == "POST" && request.url == "/in") {
-        let checkin_info = ""
-        request.on("data", (chunk) => {
-            checkin_info += chunk
-        })
-        request.on("end", () => {
-            checkin_info = JSON.parse(checkin_info)
-            console.log({ checkin_info })
-            // read DB
-            const old_checkin = JSON.parse(fs.readFileSync("./attendence.json"))
+  // =====================
+  // UNKNOWN ROUTE
+  // =====================
+  res.writeHead(404);
+  res.end("Route not found");
 
-            old_checkin.push(checkin_info)
-
-            const checkin = fs.writeFileSync("./attendence.json", JSON.stringify(old_checkin))
-
-            response.writeHead(200,{ "Content-Type": "application/json" })
-            response.write(JSON.stringify({ msg: "Check in ✅ Laboratory 🔬🧪🥼" ,data:old_checkin}));
-            response.end()
-
-        })
-
-    }
-    else if (request.method == "POST" && request.url == "/out") {
-        let checkin_info = ""
-        request.on("data", (chunk) => {
-            checkin_info += chunk
-        })
-        request.on("end", () => {
-            checkin_info = JSON.parse(checkin_info)
-            console.log({ checkin_info })
-            // read DB
-            const old_checkin = JSON.parse(fs.readFileSync("./attendence.json"))
-
-            old_checkin.push(checkin_info)
-
-            const checkin = fs.writeFileSync("./attendence.json", JSON.stringify(old_checkin))
-
-
-            response.writeHead(200,{ "Content-Type": "application/json" })
-            response.write(JSON.stringify({ msg: "Check out ✅ Go Home" ,data:old_checkin}));
-            response.end()
-
-        })
-
-    }
-    // listening on specific port
-}).listen(3000, () => { console.log("http server is running") })
+}).listen(3000, () => {
+  console.log("✅ Attendance server running on port 3000");
+});
