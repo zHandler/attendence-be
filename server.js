@@ -6,8 +6,8 @@ const path = require("path");
 // Facility Config
 // =====================
 const FACILITY = {
-  lat: 25.588283,
-  lng: 56.267099,
+  lat: 25.588769,
+  lng: 56.265947,
   radius: 100 // meters
 };
 
@@ -232,4 +232,5 @@ if (req.method === "GET" && req.url.startsWith("/report")) {
 }).listen(3000, () => {
   console.log("✅ Attendance server running on port 3000");
 });
+
 
