@@ -8,7 +8,7 @@ const path = require("path");
 const FACILITY = {
   lat: 25.588830343561458,
   lng: 56.26589413996632,
-  radius: 150
+  radius: 50
 };
 
 const WORK_START = "09:00";
@@ -263,3 +263,4 @@ http.createServer((req, res) => {
 }).listen(3000, () => {
   console.log("🚀 Attendance system running on port 3000");
 });
+
