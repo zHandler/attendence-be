@@ -19,14 +19,14 @@ const EARLY_BEFORE = "17:00";
 // =====================
 // HELPERS
 // =====================
-const readJSON = (f, d = []) =>
-  fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : d;
+const readJSON = (file, defaultData = []) =>
+  fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : defaultData;
 
-const writeJSON = (f, d) =>
-  fs.writeFileSync(f, JSON.stringify(d, null, 2));
+const writeJSON = (file, data) =>
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-const toMinutes = t => {
-  const [h, m] = t.split(":").map(Number);
+const toMinutes = time => {
+  const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
 };
 
@@ -68,11 +68,77 @@ http.createServer((req, res) => {
   }
 
   // =====================
+  // REGISTER
+  // =====================
+  if (req.method === "POST" && req.url === "/auth/register") {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.name || !data.email || !data.password) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "All fields are required" }));
+        }
+
+        const users = readJSON("./users.json");
+        if (users.find(u => u.email === data.email)) {
+          res.writeHead(409);
+          return res.end(JSON.stringify({ msg: "User already exists" }));
+        }
+
+        users.push(data);
+        writeJSON("./users.json", users);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ msg: "Registered successfully", data }));
+
+      } catch (err) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ msg: "Server error" }));
+      }
+    });
+    return;
+  }
+
+  // =====================
+  // LOGIN
+  // =====================
+  if (req.method === "POST" && req.url === "/auth/login") {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.email || !data.password) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ msg: "Email & password required" }));
+        }
+
+        const users = readJSON("./users.json");
+        const user = users.find(u => u.email === data.email && u.password === data.password);
+        if (!user) {
+          res.writeHead(404);
+          return res.end(JSON.stringify({ msg: "Invalid credentials" }));
+        }
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ msg: "Login successful", data: user }));
+
+      } catch {
+        res.writeHead(500);
+        res.end(JSON.stringify({ msg: "Server error" }));
+      }
+    });
+    return;
+  }
+
+  // =====================
   // CHECK-IN / CHECK-OUT
   // =====================
   if (req.method === "POST" && (req.url === "/in" || req.url === "/out")) {
     let body = "";
-    req.on("data", c => body += c);
+    req.on("data", chunk => (body += chunk));
     req.on("end", () => {
       try {
         const data = JSON.parse(body);
@@ -121,53 +187,24 @@ http.createServer((req, res) => {
   }
 
   // =====================
-  // REPORT (CSV)
+  // DAILY REPORT CSV
   // =====================
   if (req.method === "GET" && req.url.startsWith("/report")) {
     try {
       const records = readJSON("./attendance.json");
       const url = new URL(req.url, `http://${req.headers.host}`);
-      const month = url.searchParams.get("month"); // YYYY-MM
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
 
-      const grouped = {};
-      records.forEach(r => {
-        if (month && !r.date.startsWith(month)) return;
-        const key = `${r.name}_${r.date}`;
-        grouped[key] ||= [];
-        grouped[key].push(r);
-      });
-
-      const report = [];
-      for (const k in grouped) {
-        const day = grouped[k];
-        const name = day[0].name;
-        const date = day[0].date;
-
-        const checkIn = day.find(r => r.type === "in");
-        const checkOut = day.find(r => r.type === "out");
-
-        let hours = 0;
-        if (checkIn && checkOut) hours = ((new Date(`${date}T${checkOut.now}`) - new Date(`${date}T${checkIn.now}`))/36e5).toFixed(2);
-
-        const late = checkIn && toMinutes(checkIn.now) > toMinutes(LATE_AFTER);
-        const early = checkOut && toMinutes(checkOut.now) < toMinutes(EARLY_BEFORE);
-
-        report.push({
-          name,
-          date,
-          check_in: checkIn?.now || "",
-          check_out: checkOut?.now || "",
-          working_hours: hours,
-          late: late ? "YES" : "NO",
-          early_leave: early ? "YES" : "NO"
-        });
-      }
+      let filtered = records;
+      if (start) filtered = filtered.filter(r => r.date >= start);
+      if (end) filtered = filtered.filter(r => r.date <= end);
 
       const file = path.join(__dirname, "attendance_report.csv");
       const s = fs.createWriteStream(file);
-      s.write("name,date,check_in,check_out,working_hours,late,early_leave\n");
-      report.forEach(r => {
-        s.write(`${r.name},${r.date},${r.check_in},${r.check_out},${r.working_hours},${r.late},${r.early_leave}\n`);
+      s.write("name,date,type,time,lat,lng\n");
+      filtered.forEach(r => {
+        s.write(`${r.name},${r.date},${r.type},${r.now},${r.lat},${r.lng}\n`);
       });
       s.end();
 
@@ -193,7 +230,7 @@ http.createServer((req, res) => {
     try {
       const records = readJSON("./attendance.json");
       const url = new URL(req.url, `http://${req.headers.host}`);
-      const month = url.searchParams.get("month");
+      const month = url.searchParams.get("month"); // YYYY-MM
 
       const summary = {};
       const daily = {};
@@ -205,17 +242,16 @@ http.createServer((req, res) => {
         daily[key].push(r);
       });
 
-      for (const k in daily) {
-        const d = daily[k];
-        const name = d[0].name;
-
-        const inR = d.find(r => r.type === "in");
-        const outR = d.find(r => r.type === "out");
+      for (const key in daily) {
+        const dayRecords = daily[key];
+        const name = dayRecords[0].name;
+        const inR = dayRecords.find(r => r.type === "in");
+        const outR = dayRecords.find(r => r.type === "out");
         if (!inR || !outR) continue;
 
         summary[name] ||= { days: 0, total_hours: 0, late: 0, early: 0 };
 
-        const hrs = (new Date(`${d[0].date}T${outR.now}`) - new Date(`${d[0].date}T${inR.now}`))/36e5;
+        const hrs = (new Date(`${dayRecords[0].date}T${outR.now}`) - new Date(`${dayRecords[0].date}T${inR.now}`)) / 36e5;
         summary[name].days++;
         summary[name].total_hours += hrs;
 
@@ -237,5 +273,5 @@ http.createServer((req, res) => {
   res.end("Not found");
 
 }).listen(PORT, () => {
-  console.log(`🚀 Attendance system running on port ${PORT}`);
+  console.log(`🚀 Attendance server running on port ${PORT}`);
 });
