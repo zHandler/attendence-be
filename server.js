@@ -3,21 +3,36 @@ const fs = require("fs");
 const path = require("path");
 
 // =====================
-// Facility Config
+// CONFIG
 // =====================
 const FACILITY = {
-  lat:25.588830343561458,
+  lat: 25.588830343561458,
   lng: 56.26589413996632,
-  radius: 10 // meters
+  radius: 150
 };
 
+const WORK_START = "09:00";
+const WORK_END = "17:00";
+const LATE_AFTER = "09:05";
+const EARLY_BEFORE = "17:00";
+
 // =====================
-// Distance Calculation
+// HELPERS
 // =====================
-function getDistanceInMeters(lat1, lng1, lat2, lng2) {
+const readJSON = (f, d = []) =>
+  fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : d;
+
+const writeJSON = (f, d) =>
+  fs.writeFileSync(f, JSON.stringify(d, null, 2));
+
+const toMinutes = t => {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+};
+
+function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = v => (v * Math.PI) / 180;
-
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
 
@@ -31,10 +46,10 @@ function getDistanceInMeters(lat1, lng1, lat2, lng2) {
 }
 
 // =====================
-// Server
+// SERVER
 // =====================
 http.createServer((req, res) => {
-  // CORS
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -45,125 +60,60 @@ http.createServer((req, res) => {
   }
 
   // =====================
-  // DEFAULT
-  // =====================
-  if (req.method === "GET" && req.url === "/") {
-    res.end("Attendance Server Running");
-    return;
-  }
-
-  // =====================
-  // REGISTER
-  // =====================
-  if (req.method === "POST" && req.url === "/auth/register") {
-    let body = "";
-    req.on("data", chunk => (body += chunk));
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body);
-        if (!data.name || !data.email || !data.password) {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ msg: "All fields are required", code: 400 }));
-        }
-
-        let users = [];
-        if (fs.existsSync("./empDB.json")) {
-          users = JSON.parse(fs.readFileSync("./empDB.json"));
-        }
-
-        const exists = users.find(u => u.email === data.email);
-        if (exists) {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ msg: "User already exists", code: 400 }));
-        }
-
-        users.push(data);
-        fs.writeFileSync("./empDB.json", JSON.stringify(users));
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ msg: "Registered successfully", code: 200, data }));
-      } catch {
-        res.writeHead(500);
-        res.end(JSON.stringify({ msg: "Server error", code: 500 }));
-      }
-    });
-    return;
-  }
-
-  // =====================
-  // LOGIN
-  // =====================
-  if (req.method === "POST" && req.url === "/auth/login") {
-    let body = "";
-    req.on("data", chunk => (body += chunk));
-    req.on("end", () => {
-      try {
-        const loginInfo = JSON.parse(body);
-        if (!loginInfo.email || !loginInfo.password) {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ msg: "Email & password required", code: 400 }));
-        }
-
-        let users = [];
-        if (fs.existsSync("./empDB.json")) {
-          users = JSON.parse(fs.readFileSync("./empDB.json"));
-        }
-
-        const user = users.find(
-          u => u.email === loginInfo.email && u.password === loginInfo.password
-        );
-
-        if (!user) {
-          res.writeHead(404);
-          return res.end(JSON.stringify({ msg: "User not registered", code: 404 }));
-        }
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ msg: "Login successful", code: 200, data: user }));
-      } catch {
-        res.writeHead(500);
-        res.end(JSON.stringify({ msg: "Server error", code: 500 }));
-      }
-    });
-    return;
-  }
-
-  // =====================
   // CHECK-IN / CHECK-OUT
   // =====================
   if (req.method === "POST" && (req.url === "/in" || req.url === "/out")) {
     let body = "";
-    req.on("data", chunk => (body += chunk));
+    req.on("data", c => body += c);
     req.on("end", () => {
       try {
         const data = JSON.parse(body);
+        const { name, type, date, now } = data;
 
-        const { lat, lng, name } = data;
-        if (!lat || !lng || !name) {
+        const lat = Number(data.lat);
+        const lng = Number(data.lng);
+
+        if (!name || !date || !now || isNaN(lat) || isNaN(lng)) {
           res.writeHead(400);
-          return res.end(JSON.stringify({ msg: "Missing required fields" }));
+          return res.end(JSON.stringify({ msg: "Invalid data" }));
         }
 
-        const distance = getDistanceInMeters(lat, lng, FACILITY.lat, FACILITY.lng);
-
+        const distance = getDistance(lat, lng, FACILITY.lat, FACILITY.lng);
         if (distance > FACILITY.radius) {
           res.writeHead(403);
-          return res.end(JSON.stringify({ msg: "❌ Outside facility - access denied" }));
+          return res.end(JSON.stringify({ msg: "Outside facility" }));
         }
 
-        let records = [];
-        if (fs.existsSync("./attendence.json")) {
-          records = JSON.parse(fs.readFileSync("./attendence.json"));
+        const records = readJSON("./attendance.json");
+
+        const todayRecords = records.filter(
+          r => r.name === name && r.date === date
+        );
+
+        // ❌ Prevent double check-in
+        if (req.url === "/in" && todayRecords.some(r => r.type === "in")) {
+          res.writeHead(409);
+          return res.end(JSON.stringify({ msg: "Already checked in" }));
         }
 
-        records.push(data);
-        fs.writeFileSync("./attendence.json", JSON.stringify(records));
+        // ❌ Prevent check-out without check-in
+        if (req.url === "/out" && !todayRecords.some(r => r.type === "in")) {
+          res.writeHead(409);
+          return res.end(JSON.stringify({ msg: "Check-in required first" }));
+        }
 
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          msg: req.url === "/in" ? "Check in ✅ Laboratory 🔬" : "Check out ✅ Go Home 🏡",
-          data: records
-        }));
+        records.push({
+          ...data,
+          lat,
+          lng,
+          distance: Math.round(distance)
+        });
+
+        writeJSON("./attendance.json", records);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ msg: "Recorded successfully", data: records }));
+
       } catch {
         res.writeHead(500);
         res.end(JSON.stringify({ msg: "Server error" }));
@@ -173,66 +123,143 @@ http.createServer((req, res) => {
   }
 
   // =====================
-  // REPORT
+  // REPORT (DAILY)
   // =====================
-if (req.method === "GET" && req.url.startsWith("/report")) {
-  try {
-    let data = [];
-    if (fs.existsSync("./attendence.json")) {
-      data = JSON.parse(fs.readFileSync("./attendence.json"));
-    }
+  if (req.method === "GET" && req.url.startsWith("/report")) {
+    try {
+      const records = readJSON("./attendance.json");
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const month = url.searchParams.get("month"); // YYYY-MM
 
-    // =======================
-    // Parse query parameters
-    // =======================
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const start = url.searchParams.get("start"); // e.g., 2026-01-01
-    const end = url.searchParams.get("end");     // e.g., 2026-01-02
+      const grouped = {};
 
-    if (start || end) {
-      data = data.filter(r => {
-        const recordDate = r.date; // YYYY-MM-DD
-        if (start && recordDate < start) return false;
-        if (end && recordDate > end) return false;
-        return true;
+      records.forEach(r => {
+        if (month && !r.date.startsWith(month)) return;
+        const key = `${r.name}_${r.date}`;
+        grouped[key] ||= [];
+        grouped[key].push(r);
       });
-    }
 
-    const reportPath = path.join(__dirname, "main_report.csv");
-    const stream = fs.createWriteStream(reportPath);
-    stream.write("name,date,time,type,lat,lng\n");
+      const report = [];
 
-    data.forEach(r => {
-      stream.write(`${r.name},${r.date},${r.now},${r.type},${r.lat},${r.lng}\n`);
-    });
+      for (const k in grouped) {
+        const day = grouped[k];
+        const name = day[0].name;
+        const date = day[0].date;
 
-    stream.end();
-    stream.on("finish", () => {
-      res.writeHead(200, {
-        "Content-Type": "text/csv",
-        "Content-Disposition": "attachment; filename=attendance_report.csv"
+        const checkIn = day.find(r => r.type === "in");
+        const checkOut = day.find(r => r.type === "out");
+
+        let hours = 0;
+        if (checkIn && checkOut) {
+          const start = new Date(`${date}T${checkIn.now}`);
+          const end = new Date(`${date}T${checkOut.now}`);
+          hours = ((end - start) / 36e5).toFixed(2);
+        }
+
+        const late = checkIn && toMinutes(checkIn.now) > toMinutes(LATE_AFTER);
+        const early = checkOut && toMinutes(checkOut.now) < toMinutes(EARLY_BEFORE);
+
+        report.push({
+          name,
+          date,
+          check_in: checkIn?.now || "",
+          check_out: checkOut?.now || "",
+          working_hours: hours,
+          late: late ? "YES" : "NO",
+          early_leave: early ? "YES" : "NO"
+        });
+      }
+
+      const file = path.join(__dirname, "attendance_report.csv");
+      const s = fs.createWriteStream(file);
+
+      s.write("name,date,check_in,check_out,working_hours,late,early_leave\n");
+      report.forEach(r => {
+        s.write(
+          `${r.name},${r.date},${r.check_in},${r.check_out},${r.working_hours},${r.late},${r.early_leave}\n`
+        );
       });
-      fs.createReadStream(reportPath).pipe(res);
-    });
 
-  } catch {
-    res.writeHead(500);
-    res.end(JSON.stringify({ msg: "Server error" }));
+      s.end();
+      s.on("finish", () => {
+        res.writeHead(200, {
+          "Content-Type": "text/csv",
+          "Content-Disposition": "attachment; filename=attendance_report.csv"
+        });
+        fs.createReadStream(file).pipe(res);
+      });
+
+    } catch {
+      res.writeHead(500);
+      res.end(JSON.stringify({ msg: "Server error" }));
+    }
+    return;
   }
-  return;
-}
-
 
   // =====================
-  // UNKNOWN ROUTE
+  // MONTHLY SUMMARY
   // =====================
+  if (req.method === "GET" && req.url.startsWith("/summary")) {
+    try {
+      const records = readJSON("./attendance.json");
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const month = url.searchParams.get("month");
+
+      const summary = {};
+
+      records.forEach(r => {
+        if (!r.date.startsWith(month)) return;
+        summary[r.name] ||= {
+          days: 0,
+          total_hours: 0,
+          late: 0,
+          early: 0
+        };
+      });
+
+      const daily = {};
+
+      records.forEach(r => {
+        if (!r.date.startsWith(month)) return;
+        const key = `${r.name}_${r.date}`;
+        daily[key] ||= [];
+        daily[key].push(r);
+      });
+
+      for (const k in daily) {
+        const d = daily[k];
+        const name = d[0].name;
+
+        const inR = d.find(r => r.type === "in");
+        const outR = d.find(r => r.type === "out");
+
+        if (!inR || !outR) continue;
+
+        const start = new Date(`${d[0].date}T${inR.now}`);
+        const end = new Date(`${d[0].date}T${outR.now}`);
+        const hrs = (end - start) / 36e5;
+
+        summary[name].days++;
+        summary[name].total_hours += hrs;
+
+        if (toMinutes(inR.now) > toMinutes(LATE_AFTER)) summary[name].late++;
+        if (toMinutes(outR.now) < toMinutes(EARLY_BEFORE)) summary[name].early++;
+      }
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(summary, null, 2));
+
+    } catch {
+      res.writeHead(500);
+      res.end(JSON.stringify({ msg: "Server error" }));
+    }
+    return;
+  }
+
   res.writeHead(404);
-  res.end("Route not found");
+  res.end("Not found");
 
 }).listen(3000, () => {
-  console.log("✅ Attendance server running on port 3000");
+  console.log("🚀 Attendance system running on port 3000");
 });
-
-
-
-
